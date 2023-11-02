@@ -20,110 +20,112 @@ namespace LibraryManagement
 
         private void borrow_book_borrow_btn_Click(object sender, EventArgs e)
         {
-            string bookISBN = borrrow_id_of_the_book_textfield.Text; // Get the ISBN from the input field
-            int memberId;
+            // Get input values from the text fields
+            string bookISBN = borrow_id_of_the_book_textfield.Text;
+            int memberID;
             DateTime issueDate;
 
-            if (int.TryParse(borrow_book_id_of_the_member_textfield.Text, out memberId) &&
-                DateTime.TryParse(borrow_book_issue_date_textfield.Text, out issueDate))
+            if (!int.TryParse(borrow_book_id_of_the_member_textfield.Text, out memberID))
             {
-                BorrowBook(bookISBN, memberId, issueDate);
+                MessageBox.Show("Invalid Member ID. Please enter a valid integer.");
+                return;
             }
-            else
-            {
-                MessageBox.Show("Invalid input. Please enter valid values.");
-            }
-        }
 
-        private void BorrowBook(string bookISBN, int memberId, DateTime issueDate)
-        {
+            if (!DateTime.TryParse(borrow_book_issue_date_textfield.Text, out issueDate))
+            {
+                MessageBox.Show("Invalid Date. Please enter a valid date in the correct format.");
+                return;
+            }
+
+            // Replace "Your_Connection_String_Here" with your actual connection string
             string connectionString = "Data Source=THIWANKA;Initial Catalog=library;Integrated Security=True";
 
-            try
+            using (SqlConnection connection = new SqlConnection(connectionString))
             {
-                using (SqlConnection connection = new SqlConnection(connectionString))
+                connection.Open();
+
+                // Check availability
+                string checkAvailabilityQuery = "SELECT Quantity, IsAvailable FROM Books WHERE ISBN = @ISBN";
+                using (SqlCommand checkAvailabilityCmd = new SqlCommand(checkAvailabilityQuery, connection))
                 {
-                    connection.Open();
+                    checkAvailabilityCmd.Parameters.AddWithValue("@ISBN", bookISBN);
 
-                    // Check if the book is available using ISBN
-                    string bookAvailabilityQuery = "SELECT * FROM Books WHERE ISBN = @bookISBN";
-                    using (SqlCommand bookAvailabilityCommand = new SqlCommand(bookAvailabilityQuery, connection))
+                    using (SqlDataReader availabilityReader = checkAvailabilityCmd.ExecuteReader())
                     {
-                        bookAvailabilityCommand.Parameters.AddWithValue("@bookISBN", bookISBN);
-
-                        using (SqlDataReader bookAvailabilityReader = bookAvailabilityCommand.ExecuteReader())
+                        if (availabilityReader.Read())
                         {
-                            if (bookAvailabilityReader.Read())
+                            int quantity = availabilityReader.GetInt32(0);
+                            bool isAvailable = availabilityReader.GetBoolean(1);
+
+                            if (quantity > 0 && isAvailable)
                             {
-                                int bookQuantity = bookAvailabilityReader.GetInt32(bookAvailabilityReader.GetOrdinal("Quantity"));
+                                availabilityReader.Close(); // Close the availabilityReader
 
-                                if (bookQuantity > 0)
+                                // Check if the member has returned previous books using a separate connection
+                                using (SqlConnection innerConnection = new SqlConnection(connectionString))
                                 {
-                                    // Book is available, decrement the quantity and update "IsAvailable"
-                                    string updateBookQuery = "UPDATE Books SET Quantity = @newQuantity, IsAvailable = @isAvailable WHERE ISBN = @bookISBN";
-                                    using (SqlCommand updateBookCommand = new SqlCommand(updateBookQuery, connection))
+                                    innerConnection.Open();
+                                    string checkMemberQuery = "SELECT COUNT(*) FROM Borrow WHERE MemberID = @MemberID AND ReturnDate IS NULL";
+                                    using (SqlCommand checkMemberCmd = new SqlCommand(checkMemberQuery, innerConnection))
                                     {
-                                        updateBookCommand.Parameters.AddWithValue("@bookISBN", bookISBN);
-                                        updateBookCommand.Parameters.AddWithValue("@newQuantity", bookQuantity - 1);
-                                        updateBookCommand.Parameters.AddWithValue("@isAvailable", bookQuantity - 1 > 0 ? 1 : 0); // Set IsAvailable based on quantity
+                                        checkMemberCmd.Parameters.AddWithValue("@MemberID", memberID);
 
-                                        updateBookCommand.ExecuteNonQuery();
+                                        int activeBorrowCount = (int)checkMemberCmd.ExecuteScalar();
+
+                                        if (activeBorrowCount == 0)
+                                        {
+                                            // Borrow the book
+                                            string borrowBookQuery = "INSERT INTO Borrow (MemberID, BookID, IssueDate) VALUES (@MemberID, @BookID, @IssueDate)";
+                                            using (SqlCommand borrowBookCmd = new SqlCommand(borrowBookQuery, connection))
+                                            {
+                                                borrowBookCmd.Parameters.AddWithValue("@MemberID", memberID);
+                                                borrowBookCmd.Parameters.AddWithValue("@BookID", bookISBN); // Assuming bookISBN corresponds to BookID
+                                                borrowBookCmd.Parameters.AddWithValue("@IssueDate", issueDate);
+
+                                                borrowBookCmd.ExecuteNonQuery();
+
+                                                // Update the Books table to decrease quantity and mark as unavailable
+                                                string updateBookQuery = "UPDATE Books SET Quantity = Quantity - 1, IsAvailable = 0 WHERE ISBN = @ISBN";
+                                                using (SqlCommand updateBookCmd = new SqlCommand(updateBookQuery, connection))
+                                                {
+                                                    updateBookCmd.Parameters.AddWithValue("@ISBN", bookISBN);
+
+                                                    updateBookCmd.ExecuteNonQuery();
+                                                }
+
+                                                MessageBox.Show("Borrow successful.");
+                                                this.Close();
+                                            }
+                                        }
+                                        else
+                                        {
+                                            MessageBox.Show("The member has not returned a previous book.");
+                                        }
                                     }
-                                }
-                                else
-                                {
-                                    MessageBox.Show("The selected book is not available for borrowing. Out of stock.");
-                                    return;
                                 }
                             }
                             else
                             {
-                                MessageBox.Show("The selected book was not found.");
-                                return;
+                                MessageBox.Show("The book is not available.");
                             }
                         }
-                    }
-
-                    // Check if the member has returned previous books
-                    string memberReturnQuery = "SELECT COUNT(*) FROM Borrow WHERE MemberID = @memberId AND ReturnDate IS NULL";
-                    using (SqlCommand memberReturnCommand = new SqlCommand(memberReturnQuery, connection))
-                    {
-                        memberReturnCommand.Parameters.AddWithValue("@memberId", memberId);
-
-                        int activeBorrowedBooks = (int)memberReturnCommand.ExecuteScalar();
-
-                        if (activeBorrowedBooks > 0)
+                        else
                         {
-                            MessageBox.Show("The member has not returned previous books.");
-                            return;
+                            MessageBox.Show("Book with ISBN not found.");
                         }
                     }
-
-                    // If all checks pass, you can add the borrowing record to the database
-                    string borrowBookQuery = "INSERT INTO Borrow (MemberID, BookID, IssueDate) VALUES (@memberId, (SELECT BookID FROM Books WHERE ISBN = @bookISBN), @issueDate)";
-                    using (SqlCommand borrowBookCommand = new SqlCommand(borrowBookQuery, connection))
-                    {
-                        borrowBookCommand.Parameters.AddWithValue("@memberId", memberId);
-                        borrowBookCommand.Parameters.AddWithValue("@bookISBN", bookISBN);
-                        borrowBookCommand.Parameters.AddWithValue("@issueDate", issueDate);
-
-                        borrowBookCommand.ExecuteNonQuery();
-
-                        MessageBox.Show("Borrowed successfully!");
-                        this.Close();
-                    }
                 }
-            }
-            catch (SqlException ex)
-            {
-                MessageBox.Show("An error occurred: " + ex.Message);
-                // Optionally, you can log the error or perform further error handling.
             }
         }
 
         private void borrow_book_cancel_btn_Click(object sender, EventArgs e)
         {
             this.Close();
+        }
+
+        private void borrow_book_id_of_the_member_textfield_TextChanged(object sender, EventArgs e)
+        {
+
         }
     }
 }
