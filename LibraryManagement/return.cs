@@ -20,87 +20,53 @@ namespace LibraryManagement
 
         private void return_book_return_btn_Click(object sender, EventArgs e)
         {
-            // Get input values from the text fields
-            int bookID;
-            int memberID;
-            DateTime returnDate;
-
-            if (!int.TryParse(return_id_of_the_book_textfield.Text, out bookID))
-            {
-                MessageBox.Show("Invalid Book ID. Please enter a valid integer.");
-                return;
-            }
-
-            if (!int.TryParse(return_book_id_of_the_member_textfield.Text, out memberID))
-            {
-                MessageBox.Show("Invalid Member ID. Please enter a valid integer.");
-                return;
-            }
-
-            if (!DateTime.TryParse(return_id_of_the_book_textfield.Text, out returnDate))
-            {
-                MessageBox.Show("Invalid Date. Please enter a valid date in the correct format.");
-                return;
-            }
-
-            // Replace "Your_Connection_String_Here" with your actual connection string
             string connectionString = "Data Source=THIWANKA;Initial Catalog=library;Integrated Security=True";
+            SqlConnection connection = new SqlConnection(connectionString);
 
-            using (SqlConnection connection = new SqlConnection(connectionString))
+            try
             {
+                string bookID = return_id_of_the_book_textfield.Text;
+                string memberID = return_book_id_of_the_member_textfield.Text;
+                DateTime returnDate = DateTime.Parse(return_book_issue_date_textfield.Text); // Assuming date is in a valid format
+
                 connection.Open();
 
-                // Check if the member has borrowed the book
-                string checkBorrowQuery = "SELECT BorrowID FROM Borrow WHERE MemberID = @MemberID AND BookID = @BookID AND ReturnDate IS NULL";
-                using (SqlCommand checkBorrowCmd = new SqlCommand(checkBorrowQuery, connection))
+                // Update Books table to increase quantity and set IsAvailable to 1
+                string updateBooksQuery = "UPDATE Books SET Quantity = Quantity + 1, IsAvailable = 1 WHERE BookID = @BookID";
+                using (SqlCommand command = new SqlCommand(updateBooksQuery, connection))
                 {
-                    checkBorrowCmd.Parameters.AddWithValue("@MemberID", memberID);
-                    checkBorrowCmd.Parameters.AddWithValue("@BookID", bookID);
-
-                    object borrowID = checkBorrowCmd.ExecuteScalar();
-
-                    if (borrowID != null)
-                    {
-                        // Update the Borrow table with the return date
-                        string returnBookQuery = "UPDATE Borrow SET ReturnDate = @ReturnDate WHERE BorrowID = @BorrowID";
-                        using (SqlCommand returnBookCmd = new SqlCommand(returnBookQuery, connection))
-                        {
-                            returnBookCmd.Parameters.AddWithValue("@ReturnDate", returnDate);
-                            returnBookCmd.Parameters.AddWithValue("@BorrowID", borrowID);
-
-                            returnBookCmd.ExecuteNonQuery();
-
-                            // Update the Books table to increase the quantity and mark as available
-                            string updateBookQuery = "UPDATE Books SET Quantity = Quantity + 1, IsAvailable = 1 WHERE BookID = @BookID";
-                            using (SqlCommand updateBookCmd = new SqlCommand(updateBookQuery, connection))
-                            {
-                                updateBookCmd.Parameters.AddWithValue("@BookID", bookID);
-
-                                updateBookCmd.ExecuteNonQuery();
-                            }
-
-                            // Update the Members table with the return date
-                            string updateMemberQuery = "UPDATE Members SET ReturnDate = @ReturnDate WHERE MemberID = @MemberID";
-                            using (SqlCommand updateMemberCmd = new SqlCommand(updateMemberQuery, connection))
-                            {
-                                updateMemberCmd.Parameters.AddWithValue("@ReturnDate", returnDate);
-                                updateMemberCmd.Parameters.AddWithValue("@MemberID", memberID);
-
-                                updateMemberCmd.ExecuteNonQuery();
-                            }
-
-                            MessageBox.Show("Book returned successfully.");
-                        }
-                        else
-                        {
-                            MessageBox.Show("The member has not borrowed this book or it has already been returned.");
-                        }
-                    }
-                    else
-                    {
-                        MessageBox.Show("The member has not borrowed this book or it has already been returned.");
-                    }
+                    command.Parameters.AddWithValue("@BookID", bookID);
+                    command.ExecuteNonQuery();
                 }
+
+                // Update Borrow table to set ReturnDate
+                string updateBorrowQuery = "UPDATE Borrow SET ReturnDate = @ReturnDate WHERE BookID = @BookID AND MemberID = @MemberID";
+                using (SqlCommand command = new SqlCommand(updateBorrowQuery, connection))
+                {
+                    command.Parameters.AddWithValue("@ReturnDate", returnDate);
+                    command.Parameters.AddWithValue("@BookID", bookID);
+                    command.Parameters.AddWithValue("@MemberID", memberID);
+                    command.ExecuteNonQuery();
+                }
+
+                // Update Members table to set PreviousBorrow to false
+                string updateMembersQuery = "UPDATE Members SET PreviousBorrow = 0 WHERE MemberID = @MemberID";
+                using (SqlCommand command = new SqlCommand(updateMembersQuery, connection))
+                {
+                    command.Parameters.AddWithValue("@MemberID", memberID);
+                    command.ExecuteNonQuery();
+                }
+
+                MessageBox.Show("Book return was successful.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                this.Close();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                connection.Close();
             }
         }
 
